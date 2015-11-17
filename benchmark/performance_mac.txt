@@ -1,0 +1,71 @@
+clock resolution: mean is 49.4919 ns (5120002 iterations)
+
+benchmarking iostream - write 1M chunk
+collecting 100 samples, 1 iterations each, in estimated 827.526 ms
+mean: 3.61763 ms, lb 3.57564 ms, ub 3.66106 ms, ci 0.95
+std dev: 218.963 μs, lb 196.788 μs, ub 250.733 μs, ci 0.95
+found 0 outliers among 100 samples (0%)
+variance is severely inflated by outliers
+
+benchmarking iostream - pipe characters
+collecting 100 samples, 1 iterations each, in estimated 6.53747 s
+mean: 64.7719 ms, lb 64.5619 ms, ub 65.1156 ms, ci 0.95
+std dev: 1342.25 μs, lb 900.629 μs, ub 2.03545 ms, ci 0.95
+found 6 outliers among 100 samples (6%)
+variance is moderately inflated by outliers
+
+benchmarking iostream - formatted write
+collecting 100 samples, 1 iterations each, in estimated 684.308 ms
+mean: 6.56954 ms, lb 6.52766 ms, ub 6.62099 ms, ci 0.95
+std dev: 235.536 μs, lb 198.62 μs, ub 319.719 μs, ci 0.95
+found 2 outliers among 100 samples (2%)
+variance is moderately inflated by outliers
+
+benchmarking FILE* - write 1M chunk
+collecting 100 samples, 1 iterations each, in estimated 157.572 ms
+mean: 1235.84 μs, lb 1219.38 μs, ub 1254.73 μs, ci 0.95
+std dev: 90.1973 μs, lb 79.1399 μs, ub 103.853 μs, ci 0.95
+found 1 outliers among 100 samples (1%)
+variance is severely inflated by outliers
+
+benchmarking FILE* - pipe characters
+collecting 100 samples, 1 iterations each, in estimated 5.36574 s
+mean: 53.2621 ms, lb 53.1549 ms, ub 53.376 ms, ci 0.95
+std dev: 564.525 μs, lb 497.772 μs, ub 651.38 μs, ci 0.95
+found 0 outliers among 100 samples (0%)
+variance is unaffected by outliers
+
+benchmarking FILE* - formatted write
+collecting 100 samples, 1 iterations each, in estimated 312.177 ms
+mean: 2.84881 ms, lb 2.82689 ms, ub 2.87183 ms, ci 0.95
+std dev: 114.404 μs, lb 104.517 μs, ub 127.584 μs, ci 0.95
+found 0 outliers among 100 samples (0%)
+variance is moderately inflated by outliers
+
+benchmarking OS file - write 1M chunk
+collecting 100 samples, 1 iterations each, in estimated 66.8015 ms
+mean: 228.34 μs, lb 218.066 μs, ub 240.601 μs, ci 0.95
+std dev: 57.1156 μs, lb 49.5414 μs, ub 68.7791 μs, ci 0.95
+found 2 outliers among 100 samples (2%)
+variance is severely inflated by outliers
+
+benchmarking OS file - formatted write
+collecting 100 samples, 1 iterations each, in estimated 18.6618 s
+mean: 184.119 ms, lb 183.833 ms, ub 184.603 ms, ci 0.95
+std dev: 1844.45 μs, lb 1255.19 μs, ub 3.3436 ms, ci 0.95
+found 3 outliers among 100 samples (3%)
+variance is unaffected by outliers
+
+benchmarking stringstream - formatted write
+collecting 100 samples, 1 iterations each, in estimated 919.257 ms
+mean: 7.33392 ms, lb 7.28979 ms, ub 7.38324 ms, ci 0.95
+std dev: 237.596 μs, lb 203.587 μs, ub 288.981 μs, ci 0.95
+found 3 outliers among 100 samples (3%)
+variance is moderately inflated by outliers
+
+benchmarking string - formatted write
+collecting 100 samples, 1 iterations each, in estimated 595.981 ms
+mean: 5.38851 ms, lb 5.35419 ms, ub 5.42753 ms, ci 0.95
+std dev: 187.275 μs, lb 163.239 μs, ub 224.338 μs, ci 0.95
+found 3 outliers among 100 samples (3%)
+variance is moderately inflated by outliers

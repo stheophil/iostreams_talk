@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Title</title>
+    <meta charset="utf-8">
+    <style>
+      @import url(https://fonts.googleapis.com/css?family=Open+Sans:600,800);
+      @import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+      @import url(https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+      body { font-family: 'Droid Serif'; }
+      h1, h2, h3 {
+        font-family:'Open Sans', sans-serif;
+        font-weight: normal;
+      }
+      h1 {
+        margin-top: 0px;
+        font-weight: bold;
+      }
+      .remark-slide-content h1 {
+        font-size: 45px;
+      }
+
+      .remark-slide-content h2 {
+        font-size: 35px;
+      }
+
+      .remark-slide-content.center.middle h1 {
+        font-size: 65px;
+      }
+
+      .remark-slide-content.center.middle h2 {
+        font-size: 45px;
+      }
+
+      .remark-slide-content {
+        font-size: 22px;
+        line-height: 1.5;
+      }
+
+      .remark-code {
+        line-height: 1.2; 
+      }
+
+      .remark-slide-number {
+        font-size: 16px;
+      }
+
+      .remark-code, .remark-inline-code { 
+        font-family: 'Ubuntu Mono';
+      }
+
+      .remark-code {
+        font-size: 20px;
+      }
+
+      li pre {
+        margin-top: 5px;
+      }
+
+    </style>
+  </head>
+  <body>
+    <textarea id="source">
+
+class: center, middle
+
+# std::cout is out
+## *Why iostreams must go*
+
+---
+class: center, middle
+# I/O in the standard
+
+---
+# C-style I/O
+
+        std::FILE* fp = std::fopen(strPath, "wb");
+???
+- API does not exploit type safety: fopen write-only and then fread is possible.
+- Is fp binary or text, narrow or wide?
+- Even worse: All open files access global locale state
+--
+        if(!fp) { /* error handling, check errno for error message */ }
+???
+- errno error reporting loses (platform-dependent) information. 
+- C++ has better tools for this.
+--
+
+        unsigned int n = ...; 
+        std::string str = ...;
+        if(std::fprintf(fp, "Dec: %d Hex: %x String: %s\n", n, n, str.c_str())&lt;0) {
+          // error handling
+        }
+???
+- fprintf calls and friends are not type-safe either. Use unsafe variadic functions, compilers try to catch errors.
+
+---
+# C++ Streams
+
+--
+        std::basic_ofstream<char> ofs(strPath, std::ios_base::binary | std::ios_base::out);
+???
+- *Good:* Improves type safety. ostream vs istream, narrow or wide. 
+- Still can't distinguish binary from text, or e.g. seekable files.
+- Private locale
+--
+        if(!ofs) { /*error handling*/ }
+???
+- Error handling loses all specific information
+--
+
+        unsigned int n = ...; 
+        std::string str = ...;
+
+        ofs &lt;&lt; "Dec: " &lt;&lt; n 
+            &lt;&lt; " Hex: " &lt;&lt; std::hex &lt;&lt; n
+            &lt;&lt; " String: " &lt;&lt; str &lt;&lt; std::endl;
+???
+- Formatting is safe, but not perfect. This line has two problems. Who spots them?
+---
+# C++ Streams
+
+        std::basic_ofstream<char> ofs(strPath, std::ios_base::binary | std::ios_base::out);
+        if(!ofs) { /*error handling*/ }
+
+        unsigned int n = ...; 
+        std::string str = ...;
+
+        ofs &lt;&lt; "Dec: " &lt;&lt; n 
+            &lt;&lt; " Hex: " &lt;&lt; std::hex &lt;&lt; n &lt;&lt; std::unsetf(std::ios_base::hex)
+            &lt;&lt; " String: " &lt;&lt; str &lt;&lt; "\n";
+???
+- The formatters are stateful. std::hex sets a formatting flag that you need to unset. All future numbers output has hex otherwise.
+- std::endl does not only print EOL, also flushes. Kills performance.
+--
+        if(ofs.fail() || ofs.bad()) { 
+          // error handling
+        }
+???
+- The worst problem: error handling. What is the semantics of fail() and bad()? recoverable / not-recoverable? 
+- That is a stupid distinction because the API cannot make this. 
+  - *(Encountering eof while reading is certainly "recoverable", not being able to seek not so much)*
+- If my algorithm requires a seekable stream, yet seek "only" sets failbit, that is a logic error in my
+program and not recoverable. 
+---
+# So far, so bad
+--
+
+_How do you create a temporary file on Windows?_
+???
+- By themselves IO APIs aren't very good. 
+- On top, they aren't powerful enough to support frequent use-cases
+--
+
+```cpp
+HANDLE h = CreateFile(
+      szFile,
+      GENERIC_READ|GENERIC_WRITE,
+*     FILE_SHARE_READ,
+*     nullptr, // security descriptor, handle inheritance
+      CREATE_NEW,
+*     FILE_ATTRIBUTE_TEMPORARY, // attributes incl e.g. encryption, hidden flag
+*     nullptr // template file
+);
+```
+???
+- Highlighted is everything std APIs cannot express
+- similar options on POSIX: 
+  - follow symlinks in szPath, 
+  - block until file is available
+  - exclusive or shared lock etc
+
+- fopen/iostreams not flexible enough. Strict subset of platform-specific possibilities. 
+- Creation from native handle is not specified (but exists on POSIX and Windows).
+---
+# What would we like to have?
+--
+
+## Better Files
+
+- Platform-independent files, creatable from native handles 
+- Use type-system to document file capabilities
+- With sensible error handling
+
+--
+
+## Better Formatting
+
+- Stateless formatting, extensible, usable for different types <br/>
+(Write to `std::string`, `std::vector&lt;char&gt;`, files, `IStream*`!) 
+- Distinction between binary and text output
+- Automatic encoding conversion UTF8 - UTF16 
+
+
+---
+
+class: center, middle
+# Better Files
+
+---
+# Type Safety
+
+--
+    struct unmanaged_filebase_t {
+      // ~unmanaged_filebase_t does not close file, use for stdin etc
+      std::FILE* m_file;
+    };
+
+    struct filebase_t : unmanaged_filebase_t {
+      ~filebase_t(); // closes file
+    };
+
+???
+- Uses FILE* internally, didn't want to reimplement buffering
+- Use type system
+--
+    template&lt;typename base&gt;
+    struct readfile_impl_t : base { /* read operations */ };
+
+    template&lt;typename base&gt;
+    struct appendfile_impl_t : base { /* write operations */ };
+---
+# Type Safety
+
+    // Append-only, non-owned file, e.g. for writing to stdout
+    using unmanaged_appendfile = appendfile_impl_t&lt;unmanaged_filebase_t&gt;;
+
+    // Append-only, owned file
+    struct appendfile : appendfile_impl_t&lt;filebase_t&gt; { /* ... */ };
+
+    struct readwritefile = readfile_impl_t&lt;appendfile_impl_t&lt;filebase_t&gt;&gt; {
+      // Inherits read, write operations on single file handle
+    };
+???
+- Now we can play mix and match with the four building blocks 
+---
+# File Creation: POSIX
+???
+- Opening/creating files is platform-specific. 
+- Constructors implemented differently for each OS
+- Create FILE* from OS handle
+--
+
+```
+appendfile(filechar const*  szFile, create_always_tag) 
+    throw(std::ios_base::failure)
+{
+  int fd = open(szFile, O_WRONLY | O_APPEND | O_TRUNC | ..., ...); // may fail
+  if(-1!=fd) throw std::ios_base::failure("");
+
+  // File handle conversion assumed not to fail
+  std::FILE* file = VERIFY(fdopen(fd, "a"));
+  ...
+}
+```
+???
+- VERIFY is a think-cell error handling macro, left in to document that we assume the conversion not to fail
+---
+# File Creation: Windows
+
+```
+appendfile(filechar const*  szFile, create_always_tag) 
+    throw(std::ios_base::failure)
+{
+  HANDLE hfile = CreateFile(...); // may fail, error handling omitted
+  if(INVALID_HANDLE_VALUE!=hfile) throw std::ios_base::failure("");
+
+  // File handle conversion assumed not to fail
+  int fd = _open_osfhandle(reinterpret_cast<intptr_t>(hfile), _O_WRONLY);
+  _ASSERT(-1 != fd);
+  std::FILE* file = VERIFY(_fdopen(fd, "wb"))
+  ...
+}
+```
+---
+
+# Error handling
+???
+- Uses exceptions, really useful for program flow in i/o code
+
+--
+
+```
+template&lt;typename base&gt;
+struct readfile_impl_t : base {
+  // throws in case of error only:
+  template&lt;typename T&gt;
+  T try_read(void* pv, T cb) throw(std::ios_base::failure);
+
+  // throws in case of error or if less than cb bytes read:
+  void read(void* pv, std::size_t cb) throw(std::ios_base::failure); 
+
+  template&lt;typename T&gt;
+  T read() throw(std::ios_base::failure);
+};
+```
+???
+- Different operations have different error cases
+- Also: All reads (and writes) are binary
+
+---
+# Error handling
+
+*Reading in chunks e.g. for parsing:*
+```
+auto cbRead = file.try_read(achBuffer, sizeof(achBuffer)); // may return < sizeof(achBuffer)
+```
+*Reading structured data*
+```
+int nLength = file.read<int>(); // must read sizeof(int)
+// Now read nLength characters
+```
+---
+
+class: center, middle
+# Better Formatting
+
+---
+# Better Formatting
+
+      // Stateless formatting, into arbitrary types, with encoding conversion:
+      std::basic_string&lt;char16_t&gt; str;
+      str &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+--
+
+      // We need that too (unfortunately):
+      std::vector&lt;char, some_custom_allocator&gt; vecch;
+      vecch &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+--
+
+      // And this of course:
+      appendfile file(...);
+      make_typed_stream<char16_t>(file) // write UTF16 to file
+        &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+--
+
+      // Let's get crazy
+      IStream* iStream = ...;
+      make_typed_stream<char>(iStream)  // write UTF8 to iStream
+        &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+--
+
+_10 lines of code needed to adapt `IStream*` to formatting library._
+---
+# Make Everything Streamable
+
+--
+How to pipe characters into anything?
+--
+
+```
+template&lt;typename Sink&gt;
+typename std::enable_if&lt; 
+*  is_streamable&lt;Sink&gt;::value, 
+  Sink&amp;
+&gt;::type 
+operator&lt;&lt;( Sink&amp; os, stream_traits<Sink>::value_type ch) {
+*  stream_traits<Sink>::append(os, ch);  
+  return os;
+}
+```
+--
+## _We need traits of course!_
+---
+
+# Type Traits the Classic Way
+
+--
+
+      template&lt;typename T&gt;
+      struct stream_traits {
+        using value_type = void;
+      }; 
+
+      // specialize stream_traits e.g. for std::vector, 
+      // providing all needed types and functions
+      template&lt;typename Char&gt;
+      struct stream_traits&lt;std::vector&lt;Char&gt;&gt; {
+        using value_type = Char; 
+      }; 
+--
+
+      // Declare our is_streamable trait for a type T:
+      template<typename T>
+      using is_streamable = std::integral_constant<
+        bool, 
+        !std::is_same<void, typename stream_traits<T>::value_type>::value
+      >;
+???
+- Why is that not the best way? 
+- Does not support traits for inherited types
+- All traits must be in global namespace
+---
+# Type Traits using Function Lookup
+       
+    struct not_streamable {}; 
+    not_streamable tc_stream_traits(...); // least preferred overload
+
+    template<typename Char>;
+    struct vector_stream_traits {
+      using value_type = Char; 
+    };    
+    template<typename Char>
+    vector_stream_traits<Char> tc_stream_traits(std::vector<Char>&); 
+--
+
+    // Lookup tc_stream_traits(T&) return type (with ADL and overloads!)
+    template<typename T>
+    using stream_traits = 
+      decltype( tc_stream_traits( std::declval<std::decay_t<T>&>() ) );
+--
+
+    // Define is_streamable<T> 
+    template<typename T>
+    using is_streamable = std::integral_constant<
+          bool, 
+          !std::is_same<not_streamable, stream_traits<T>>::value
+        >;
+---
+# A Complete Traits Implementation
+            
+    struct istream_stream_traits {
+      using value_type = unsigned char; // binary device, like a file
+
+      // Write a character
+      static void append(ISequentialStream* iStream, unsigned char ch) noexcept {
+        HRERR(iStream->Write(std::addressof(ch), 1, nullptr));
+      }
+
+      // Write a range of characters
+      static void append_range(ISequentialStream* iStream, Rng const& rng) noexcept {
+        HRERR(iStream->Write(boost::begin(rng), size(rng), nullptr));
+      }
+
+      // Flush device
+      static void flush(ISequentialStream* iStream) noexcept {}
+    };
+    istream_stream_traits tc_stream_traits(ISequentialStream*);
+
+_`IStream*` is convertible to `ISequentialStream*`_ 
+
+---
+# Converting Encodings
+
+```
+template&lt;typename Sink, typename Rng&gt;
+typename std::enable_if&lt; 
+*  is_streamable&lt;Sink&gt;::value &amp;&amp; is_char_range&lt;Rng&gt;::value, 
+  Sink&amp;
+&gt;::type 
+operator&lt;&lt;( Sink&amp; os, Rng&amp;&amp; rng) {
+* ConvertEnc&lt;char_t of Rng, char_t of Sink&gt;(os, std::forward&lt;Rng&gt;(rng));
+  return os;
+}
+```
+--
+- `ConvertEnc&lt;Char, Char&gt;(os, rng)` simply calls `stream_traits&lt;Sink&gt;::append_range`
+- Specializations `ConvertEnc&lt;char, char16_t&gt;` and `ConvertEnc&lt;char16_t, char&gt;` convert encodings
+- Compile-time error when no suitable conversion exists, e.g. `ConvertEnc&lt;char16_t, unsigned char&gt;`
+---
+# Converting Encodings
+
+_Convert UTF-8 to UTF-16:_
+```
+std::basic_string&lt;char16_t&gt; str; 
+str &lt;&lt; "Hello World\n"; // UTF8 to UTF16
+```
+--
+_Files are binary and have no encoding. This does not compile:_
+```
+appendfile file = ...;
+file &lt;&lt; "Hello World\n";
+```
+--
+_Declare file to accept UTF-8 encoding:_
+```
+appendfile file = ...;
+make_typed_stream<char>(file) &lt;&lt; "Hello World\n";
+```
+
+---
+# Streaming Custom Types
+
+--
+Overload global `operator&lt;&lt;` for custom types:
+
+```
+template&lt;typename Sink&gt;
+typename std::enable_if&lt; 
+*  is_streamable&lt;Sink&gt;::value, 
+  Sink&amp;
+&gt;::type 
+operator&lt;&lt;( Sink&amp; os,boost::uuids::uuid const&amp; uuid) {
+*  os &lt;&lt; boost::uuids::to_string(uuid);
+  return os;
+}
+```
+---
+
+# Formatting Numbers 
+
+```
+template&lt;T&gt;
+struct as_dec_impl {
+  T m_f;
+  ...
+  // Decimal separator, precision, padding etc
+      
+  template&lt;typename Sink&gt;
+  friend typename std::enable_if&lt; 
+*    is_streamable&lt;Sink&gt;::value, 
+    Sink&amp; 
+  &gt;::type 
+  operator&lt;&lt;( Sink&amp; os, as_dec_impl&lt;T,Char&gt; const&amp; n) {
+*        // Convert m_f to characters and stream those to os
+        return os;
+  }
+};
+```
+--
+_Formatters we have:_ 
+- `as_dec(FloatingPointType f, CharType chDecimal)`
+- `as_padded_lc_hex(IntegralType const&amp; t)`
+
+---
+# Thank You!
+
+      // Stateless formatting, into arbitrary types, with encoding conversion:
+      std::basic_string&lt;char16_t&gt; str;
+      str &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+
+      // We need that too (unfortunately):
+      std::vector&lt;char, some_custom_allocator&gt; vecch;
+      vecch &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+
+      // And this of course:
+      appendfile file(...);
+      make_typed_stream<char16_t>(file) // write UTF16 to file
+        &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+
+      // Let's get crazy
+      IStream* iStream = ...;
+      make_typed_stream<char>(iStream)  // write UTF8 to iStream
+        &lt;&lt; "Dec: " &lt;&lt; as_dec(1000) &lt;&lt; " Hex: " &lt;&lt; as_hex(1000);
+
+---
+class: center, middle
+# Slides &amp; Benchmark
+## https://github.com/stheophil/iostreams_talk
+## https://github.com/CppUGBerlin/Talks
+
+---
+class: center, middle
+# _"iostreams are super slow!"_
+--
+
+## _... but are they?_
+---
+class: center, middle
+<img src="benchmark_01.png" width="90%">
+
+**[Times in ms]**
+???
+- Small benchmark: Writing 1 Mb chunks or smaller chunk using formatter
+- with ostream or with FILE*
+- yes, ostream is slower than FILE* in this comparison, but as discussed,
+you also get some features from ostreams that FILE* does not have
+- BUT
+---
+class: center, middle
+<img src="benchmark_02.png" width="90%">
+
+**[Times in ms]**
+???
+- What if we write 1M chunks directly using OS function?
+- Performance diff between iostream and FILE* becomes almost irrelevant. 
+- If you know what you're doing, you can do much faster than std functions. 
+- What if we're writing smaller formatted chunks using OS functions?
+---
+class: center, middle
+<img src="benchmark_03.png" width="90%">
+
+**[Times in ms]**
+
+???
+- Without userland buffer we can also do much worse than iostream/FILE
+
+---
+# Remarks for Implementors
+
+1. The number of `std::FILE*` that can be returned is limited on POSIX and Windows systems. 
+  - When using the Windows CRT, call `_setmaxstdio(8192)` to increase the limit to its maximum permitted value
+  - On POSIX systems, call `setrlimit(RLIMIT_NOFILE, ...)` before you do any standard I/O call
+
+2. According to the standard, when a `std::FILE*` is opened both for reading and writing, you must call `fseek` or `fflush` when you
+switch from reading to writing or vice versa. 
+
+---
+# Other File Implementations
+
+- **Chromium:**
+  https://chromium.googlesource.com/chromium/src.git/+/master/base/files/file.h
+
+- **QT:**
+  http://doc.qt.io/qt-5/qfile.html
+
+- **Juce:**
+  http://www.juce.com/doc/classFile
+
+# Formatting
+- **cppformat:** printf-style formatting but type-safe
+  http://cppformat.github.io/latest/reference.html
+---
+
+    </textarea>
+    <script src="https://gnab.github.io/remark/downloads/remark-latest.min.js">
+    </script>
+    <script>
+      var slideshow = remark.create({
+        highlightLines: true,
+        highlightLanguage: "cpp",
+        highlightSpans: true,
+        ratio: "16:9"
+      });
+    </script>
+  </body>
+</html>
