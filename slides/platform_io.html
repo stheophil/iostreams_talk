@@ -285,8 +285,7 @@ appendfile(filechar const*  szFile, create_always_tag)
 template&lt;typename base&gt;
 struct readfile_impl_t : base {
   // throws in case of error only:
-  template&lt;typename T&gt;
-  T try_read(void* pv, T cb) throw(std::ios_base::failure);
+  std::size_t try_read(void* pv, std::size_t cb) throw(std::ios_base::failure);
 
   // throws in case of error or if less than cb bytes read:
   void read(void* pv, std::size_t cb) throw(std::ios_base::failure); 
@@ -369,23 +368,20 @@ operator&lt;&lt;( Sink&amp; os, stream_traits<Sink>::value_type ch) {
 --
 
       template&lt;typename T&gt;
-      struct stream_traits {
-        using value_type = void;
+      struct stream_traits { // fall-back implementation
+        using value_type = void; // with non-sensical value_type
       }; 
 
-      // specialize stream_traits e.g. for std::vector, 
-      // providing all needed types and functions
       template&lt;typename Char&gt;
-      struct stream_traits&lt;std::vector&lt;Char&gt;&gt; {
-        using value_type = Char; 
+      struct stream_traits&lt;std::vector&lt;Char&gt;&gt; { // specialization for std::vector
+        using value_type = Char; // provide needed typedefs and methods (omitted)
       }; 
 --
 
-      // Declare our is_streamable trait for a type T:
-      template<typename T>
+      template<typename T> // Define is_streamable<T> by looking up stream_traits<T>
       using is_streamable = std::integral_constant<
         bool, 
-        !std::is_same<void, typename stream_traits<T>::value_type>::value
+    *    !std::is_same<void, typename stream_traits<T>::value_type>::value
       >;
 ???
 - Why is that not the best way? 
@@ -395,27 +391,25 @@ operator&lt;&lt;( Sink&amp; os, stream_traits<Sink>::value_type ch) {
 # Type Traits using Function Lookup
        
     struct not_streamable {}; 
-    not_streamable tc_stream_traits(...); // least preferred overload
+    not_streamable tc_stream_traits(...); // Fallback implemenation, always least preferred overload
 
     template<typename Char>;
-    struct vector_stream_traits {
-      using value_type = Char; 
+    struct vector_stream_traits { 
+      using value_type = Char; // Again, required trait methods are omitted
     };    
-    template<typename Char>
+    template<typename Char> // Overload tc_stream_traits for std::vector<Char>
     vector_stream_traits<Char> tc_stream_traits(std::vector<Char>&); 
 --
 
-    // Lookup tc_stream_traits(T&) return type (with ADL and overloads!)
     template<typename T>
-    using stream_traits = 
+    using stream_traits = // Lookup return type of tc_stream_traits(T&) (with ADL and overloads!)
       decltype( tc_stream_traits( std::declval<std::decay_t<T>&>() ) );
 --
 
-    // Define is_streamable<T> 
-    template<typename T>
+    template<typename T> // Again, is_streamable<T> is defined via stream_traits<T>
     using is_streamable = std::integral_constant<
           bool, 
-          !std::is_same<not_streamable, stream_traits<T>>::value
+    *     !std::is_same<not_streamable, stream_traits<T>>::value
         >;
 ---
 # A Complete Traits Implementation
@@ -450,13 +444,13 @@ typename std::enable_if&lt;
   Sink&amp;
 &gt;::type 
 operator&lt;&lt;( Sink&amp; os, Rng&amp;&amp; rng) {
-* ConvertEnc&lt;char_t of Rng, char_t of Sink&gt;(os, std::forward&lt;Rng&gt;(rng));
+* ConvertEnc&lt;char_t of Rng, char_t of Sink&gt;::Append(os, std::forward&lt;Rng&gt;(rng));
   return os;
 }
 ```
 --
-- `ConvertEnc&lt;Char, Char&gt;(os, rng)` simply calls `stream_traits&lt;Sink&gt;::append_range`
-- Specializations `ConvertEnc&lt;char, char16_t&gt;` and `ConvertEnc&lt;char16_t, char&gt;` convert encodings
+- `ConvertEnc&lt;Char, Char&gt;::Append(os, rng)` simply calls `stream_traits&lt;Sink&gt;::append_range`
+- Specializations `ConvertEnc&lt;char, char16_t&gt;::Append` and `ConvertEnc&lt;char16_t, char&gt;::Append` convert encodings
 - Compile-time error when no suitable conversion exists, e.g. `ConvertEnc&lt;char16_t, unsigned char&gt;`
 ---
 # Converting Encodings
